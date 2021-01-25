@@ -86,12 +86,12 @@
 #include "errno.h"
 #include "pthread.h"
 
-#include "dirent.h"
 #include "sys/stat.h"
 #include "signal.h"
 
 #include "common_types.h"
 #include "osapi.h"
+#include <dirent.h>
 
 /****************************************************************************************
                                      DEFINES
@@ -115,7 +115,9 @@ extern void   OS_InterruptSafeUnlock(pthread_mutex_t *lock, sigset_t *previous);
 ****************************************************************************************/
 
 OS_FDTableEntry OS_FDTable[OS_MAX_NUM_OPEN_FILES];
+os_dir_t        OS_DDTable[OS_MAX_NUM_OPEN_FILES];
 pthread_mutex_t OS_FDTableMutex;
+pthread_mutex_t OS_DDTableMutex;
 /****************************************************************************************
                                 INITIALIZATION FUNCTION
 ****************************************************************************************/
@@ -131,18 +133,24 @@ int32 OS_FS_Init(void)
         strcpy(OS_FDTable[i].Path, "\0");
         OS_FDTable[i].User =       0;
         OS_FDTable[i].IsValid =    FALSE;
+
+        OS_DDTable[i].OSfd =       -1;
+        OS_DDTable[i].IsValid =    FALSE;
     }
     
     ret = pthread_mutex_init((pthread_mutex_t *) & OS_FDTableMutex,NULL); 
-
     if ( ret < 0 )
     {
         return(OS_ERROR);
     }
-    else
+
+    ret = pthread_mutex_init((pthread_mutex_t *) & OS_DDTableMutex,NULL);
+    if ( ret < 0 )
     {
-        return(OS_SUCCESS);
+        return(OS_ERROR);
     }
+
+    return(OS_SUCCESS);
 
 }
 /****************************************************************************************
@@ -1054,9 +1062,10 @@ int32 OS_mkdir (const char *path, uint32 access)
 
 os_dirp_t OS_opendir (const char *path)
 {
-
-    os_dirp_t dirdescptr;
-    char local_path[OS_MAX_LOCAL_PATH_LEN];
+    uint32   PossibleDD;
+    char     local_path[OS_MAX_LOCAL_PATH_LEN];
+    sigset_t previous;
+    sigset_t mask;
 
     /*
     ** Check to see if the path pointer is NULL
@@ -1081,18 +1090,37 @@ os_dirp_t OS_opendir (const char *path)
     {
         return NULL;
     }
-   
-    dirdescptr = opendir( (char*) local_path);
-    
-    if (dirdescptr == NULL)
+
+    OS_InterruptSafeLock(&OS_DDTableMutex, &mask, &previous);
+
+    for ( PossibleDD = 0; PossibleDD < OS_MAX_NUM_OPEN_FILES; PossibleDD++)
     {
+        if( OS_DDTable[PossibleDD].IsValid == FALSE)
+        {
+            break;
+        }
+    }
+
+    if (PossibleDD >= OS_MAX_NUM_OPEN_FILES)
+    {
+        OS_InterruptSafeUnlock(&OS_DDTableMutex, &previous);
+        return OS_FS_ERR_NO_FREE_FDS;
+    }
+   
+    OS_DDTable[PossibleDD].OSfd = opendir( (char*) local_path);
+    if (OS_DDTable[PossibleDD].OSfd == NULL)
+    {
+        OS_InterruptSafeUnlock(&OS_DDTableMutex, &previous);
         return NULL;
     }
-    else
-    {
-        return dirdescptr;
-    }
+
+    /* Mark the table entry as valid so no other
+     * task can take that ID */
+    OS_DDTable[PossibleDD].IsValid = TRUE;
+
+    OS_InterruptSafeUnlock(&OS_DDTableMutex, &previous);
     
+    return &OS_DDTable[PossibleDD];
 } /* end OS_opendir */
 
 /*--------------------------------------------------------------------------------------
@@ -1113,9 +1141,10 @@ int32 OS_closedir (os_dirp_t directory)
         return OS_FS_ERR_INVALID_POINTER;
     }
 
-    status = closedir(directory);
+    status = closedir(directory->OSfd);
     if (status != ERROR)
     {
+    	directory->IsValid = FALSE;
         return OS_FS_SUCCESS;
     }
     else
@@ -1135,22 +1164,21 @@ int32 OS_closedir (os_dirp_t directory)
 ---------------------------------------------------------------------------------------*/
 os_dirent_t *  OS_readdir (os_dirp_t directory)
 { 
-    os_dirent_t *tempptr;
+    struct dirent *entry;
 
     if (directory == NULL)
         return NULL;
 
-    tempptr = readdir( directory);
+    entry = readdir(directory->OSfd);
     
-    if (tempptr != NULL)
+    if (entry != NULL)
     {
-        return tempptr;
+        strcpy(directory->DirEnt.d_name, entry->d_name);
+        directory->DirEnt.d_type = entry->d_type;
+        return &directory->DirEnt;
     }
-    else
-    {
-        return NULL;
-    }
-        
+
+    return NULL;
 } /* end OS_readdir */
 
 /*--------------------------------------------------------------------------------------
@@ -1164,7 +1192,7 @@ void  OS_rewinddir (os_dirp_t directory )
 {
     if (directory != NULL)
     {
-       rewinddir( directory);
+       rewinddir( directory->OSfd);
     }
 }
 /*--------------------------------------------------------------------------------------

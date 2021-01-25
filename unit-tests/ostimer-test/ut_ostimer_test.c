@@ -26,6 +26,10 @@
 
 extern UT_OsLogInfo_t  g_logInfo;
 
+int  OS_InterruptSafeLock(pthread_mutex_t *lock, sigset_t *set, sigset_t *previous);
+void OS_InterruptSafeUnlock(pthread_mutex_t *lock, sigset_t *previous);
+
+
 /*--------------------------------------------------------------------------------*
 ** Global variables
 **--------------------------------------------------------------------------------*/

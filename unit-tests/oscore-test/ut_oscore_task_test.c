@@ -918,7 +918,6 @@ void getid_test_task(void)
     memset(text, '\0', sizeof(text));
     UT_OS_LOG_MACRO("OS_TaskGetId() - #1 Nominal [This is the returned task Id=%d]\n",
     		            (int)task_id);
-
     while (1)
     {
         OS_TaskDelay(1000);

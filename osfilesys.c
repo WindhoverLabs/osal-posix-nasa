@@ -93,7 +93,6 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
-#include <dirent.h>
 #include <sys/statvfs.h>
 
 #include "common_types.h"
@@ -579,6 +578,8 @@ int32 OS_TranslatePath(const char *VirtualPath, char *LocalPath)
     char devname [OS_MAX_PATH_LEN];
     char filename[OS_MAX_PATH_LEN];
     int  NumChars;
+    int  DeviceLen;
+    int  FilenameLen;
     int  i=0;
 
     /*
